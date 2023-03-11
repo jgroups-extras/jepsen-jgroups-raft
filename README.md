@@ -1,22 +1,19 @@
 # jepsen.jgroups.raft
 
-A Clojure library designed to ... well, that part is up to you.
+Jepsen tests for the [JGroups RAFT](https://github.com/belaban/jgroups-raft) implementation.
 
-## Usage
+# Setup
 
-FIXME
+A Jepsen environment is required before running. In short, a cluster of at least three
+nodes and a control node to run the tests. The control node runs the suite and requires
+JDK, JNA, Leiningen, Gnuplot, and Graphviz.
 
-## License
+## Running
 
-Copyright © 2023 FIXME
+We do not enter into Jepsen's configuration, so we explain only the options available
+for our tests. We provide workloads for testing the state machine replication and
+counter. The available nemesis is none.
 
-This program and the accompanying materials are made available under the
-terms of the Eclipse Public License 2.0 which is available at
-http://www.eclipse.org/legal/epl-2.0.
+# Test Suite
 
-This Source Code may also be made available under the following Secondary
-Licenses when the conditions for such availability set forth in the Eclipse
-Public License, v. 2.0 are satisfied: GNU General Public License as published by
-the Free Software Foundation, either version 2 of the License, or (at your
-option) any later version, with the GNU Classpath Exception which is available
-at https://www.gnu.org/software/classpath/license.html.
+The reasoning behind our tests and the results we found are listed in the [docs](/doc/intro.md).
