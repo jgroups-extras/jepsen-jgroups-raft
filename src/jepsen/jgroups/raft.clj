@@ -4,10 +4,13 @@
     (jepsen
       [cli :as cli]
       [tests :as tests])
+    [jepsen.checker :as checker]
+    [jepsen.checker.timeline :as timeline]
     [jepsen.generator :as gen]
-    [jepsen.os.debian :as debian]
+    [jepsen.jgroups.client :as client]
     [jepsen.jgroups.server :as server]
-    [jepsen.jgroups.client :as client]))
+    [jepsen.os.debian :as debian]
+    [knossos.model :as model]))
 
 
 (defn raft-tests
@@ -24,7 +27,14 @@
           :os              debian/os
           :db              (server/db)
           :client          (client/->ReplicatedStateMachineClient nil)
-          :generator       (->> (gen/mix [client/r client/w])
+          :checker         (checker/compose
+                             {:perf     (checker/perf)
+                              :linear   (checker/linearizable
+                                          {:model     (model/cas-register)
+                                           :algorithm :linear})
+                              :timeline (timeline/html)
+                              :exceptions (checker/unhandled-exceptions)})
+          :generator       (->> (gen/mix [client/r client/w client/cas])
                                 (gen/stagger 1)
                                 (gen/nemesis nil)
                                 (gen/time-limit 15))}))

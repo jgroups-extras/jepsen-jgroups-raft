@@ -1,15 +1,16 @@
 (ns jepsen.jgroups.server
   "Utilities for managing the server.
-  This will transfer the necessary resources to the node, install JDK 11, and start a daemon running
+  This will transfer the necessary resources to the node, install JDK 17, and start a daemon running
   the application.
 
-  The required dependencies are the JGroups and JGroups-RAFT jars, and the XML configuration. The dependencies
-  are all located in the `resources` folder. The application we run is the `ReplicatedStateMachineDemo`,
-  available in the JGroups-RAFT jar. More info:
+  The application is available in the folder `java` at the project root. Which is a replicated state
+  machine writing values to a map. We build the project with lein and upload the jar to the remote
+  nodes. More info:
 
   * [Running jgroups-raft as a service](http://belaban.blogspot.com/2020/12/running-jgroups-raft-as-service.html)"
   (:require
     [clojure.java.io :as io]
+    [clojure.java.shell :refer [sh]]
     [clojure.string :as str]
     [clojure.tools.logging :refer :all]
     (jepsen
@@ -20,20 +21,38 @@
     [jepsen.os.debian :as debian]))
 
 (def dir "/opt/raft")
-(def server-libs (str dir "/libs"))
-(def local-libs "resources/libs")
-(def props-file (str dir "/raft.xml"))
+(def remote-jar (str dir "/server.jar"))
+(def remote-props-file (str dir "/raft.xml"))
 (def log-file (str dir "/server.log"))
 (def pid-file (str dir "/server.pid"))
+(def local-server "server")
+(def local-props-file (str local-server "/resources/raft.xml"))
+(def local-server-jar (str local-server "/target/server.jar"))
 
-(defn download-libs!
-  "Download the necessary jars to run the demo, which are JGroups and JGroups-RAFT"
+(defn install-jdk17!
+  "Installs an openjdk jdk17."
   []
-  (info "Installing required jars.")
-  (c/exec :mkdir :-p server-libs)
+  (c/su
+    (debian/install [:openjdk-17-jdk])))
+
+(defn build-server!
+  "Build the server jar."
+  [test node]
+  (when (= node (jepsen/primary test))
+    (when-not (.exists (io/file local-server-jar))
+      (info "Building server jar")
+      (let [{:keys [exit out err]} (sh "lein" "uberjar" :dir local-server)]
+        (info out)
+        (info err)
+        (info exit)
+        (assert (zero? exit))))))
+
+(defn install-server!
+  "Install the server in the remote node."
+  []
+  (c/exec :mkdir :-p dir)
   (c/cd dir
-        (c/upload (.getCanonicalPath (io/file (str local-libs "/jgroups.jar"))) (str server-libs "/jgroups.jar"))
-        (c/upload (.getCanonicalPath (io/file (str local-libs "/raft.jar"))) (str server-libs "/raft.jar"))))
+        (c/upload (.getCanonicalPath (io/file local-server-jar)) remote-jar)))
 
 (defn start!
   "Start the ReplicatedStateMachineDemo in listen mode."
@@ -41,18 +60,15 @@
   (c/cd dir
         (let [members (->> (:nodes test)
                            (str/join ","))]
-          (info "Starting node " node " with members " members)
+          (info "Starting node" node "with members" members)
           (cu/start-daemon! {:chdir dir
                              :logfile log-file
                              :pidfile pid-file}
                             "/usr/bin/java"
-                            (str "-Draft_members=" members)
-                            :-cp (str server-libs "/*")
-                            "org.jgroups.raft.demos.ReplicatedStateMachineDemo"
-                            :-name node
-                            :-port 9000
-                            :-props props-file
-                            :-nohup :-listen
+                            :-jar remote-jar
+                            :--members members
+                            :-n node
+                            :-p remote-props-file
                             :> log-file))))
 
 (defn stop!
@@ -68,9 +84,11 @@
   []
   (reify db/DB
     (setup! [_ test node]
-      (download-libs!)
-      (c/upload-resource! "raft.xml" props-file)
-      (debian/install-jdk11!)
+      (build-server! test node)
+      (jepsen/synchronize test)
+      (install-jdk17!)
+      (c/upload local-props-file remote-props-file)
+      (install-server!)
       (jepsen/synchronize test)
       (start! test node)
       (Thread/sleep 15000))
@@ -78,7 +96,7 @@
     (teardown! [_ test node]
       (stop! node)
       (c/su
-        (c/exec :rm :-rf log-file pid-file server-libs)))
+        (c/exec :rm :-rf log-file pid-file remote-jar (str "/tmp/" node ".log"))))
 
     db/LogFiles
     (log-files [_ test node]
