@@ -35,7 +35,7 @@
                               :timeline (timeline/html)
                               :exceptions (checker/unhandled-exceptions)})
           :generator       (->> (gen/mix [client/r client/w client/cas])
-                                (gen/stagger 1)
+                                (gen/stagger 1/65)
                                 (gen/nemesis nil)
                                 (gen/time-limit 15))}))
 
