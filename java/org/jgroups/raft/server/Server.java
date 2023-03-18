@@ -1,7 +1,6 @@
 package org.jgroups.raft.server;
 
 import java.io.DataInput;
-import java.io.IOException;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutionException;
@@ -11,6 +10,8 @@ import org.jgroups.JChannel;
 import org.jgroups.blocks.cs.BaseServer;
 import org.jgroups.blocks.cs.Receiver;
 import org.jgroups.blocks.cs.TcpServer;
+import org.jgroups.logging.Log;
+import org.jgroups.logging.LogFactory;
 import org.jgroups.protocols.raft.RAFT;
 import org.jgroups.protocols.raft.Role;
 import org.jgroups.raft.data.Request;
@@ -40,6 +41,7 @@ import org.jgroups.util.Util;
  * @author José Bolina
  */
 public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
+  protected final Log log = LogFactory.getLog(getClass());
   private String props;
   private String name;
   private long timeout;
@@ -71,14 +73,15 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     Response res = switch (Command.values()[ordinal]) {
       case PUT -> {
         Request request = Util.objectFromStream(in);
-        System.out.printf("--- PUT: %s --> %s\n", key, request);
+        log.info("PUT: %s --> %s", key, request);
         put(key, request.getValue());
         yield new Response(request.getUuid(), (String) null);
       }
       case GET -> {
-        System.out.println("--- GET: " + key);
+        log.info("GET: " + key);
         UUID uuid = Util.objectFromStream(in);
-        yield new Response(uuid, rsm.quorumGet(key));
+        boolean quorum = in.readBoolean();
+        yield quorum ? new Response(uuid, rsm.quorumGet(key)) : new Response(uuid, rsm.get(key));
       }
       case CAS -> {
         String from = Util.objectFromStream(in);
@@ -86,10 +89,10 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
         UUID uuid = Util.objectFromStream(in);
         try {
           boolean cas = rsm.compareAndSet(key, from, to);
-          System.out.printf("--- CAS: %s (%s) -> (%s)? %s\n", key, from, to, cas);
+          log.info("CAS: %s (%s) -> (%s)? %s", key, from, to, cas);
           yield new Response(uuid, String.valueOf(cas));
         } catch (Exception e) {
-          System.out.printf("--- CAS: %s unknown key\n", key);
+          log.info("CAS: %s unknown key", key);
           yield new Response(uuid, extractCause(e));
         }
       }
@@ -107,11 +110,11 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
 
   public Server withProps(String props) {
     if (props == null || props.trim().isEmpty()) {
-      System.out.println("Properties are empty!");
+      log.error("Properties are empty!");
       return this;
     }
 
-    System.out.println("-- using properties at: " + props);
+    log.info("Using properties at: " + props);
     this.props = props;
     return this;
   }
@@ -127,7 +130,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
   }
 
   public Server withMembers(String members) {
-    System.out.println("-- setting members: " + members);
+    log.info("-- setting members: " + members);
     System.getProperties().put("raft_members", members);
     return this;
   }
@@ -145,8 +148,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     server = new TcpServer(bind, port).receiver(this);
     server.start();
     int local_port=server.localAddress() instanceof IpAddress ? ((IpAddress)server.localAddress()).getPort(): 0;
-    System.out.printf("\n-- %s listening at %s:%s\n\n", ReplicatedStateMachineDemo.class.getSimpleName(),
-        bind != null? bind : "0.0.0.0",  local_port);
+    log.info("Listening at %s:%s", bind != null ? bind : "0.0.0.0",  local_port);
 
     return this;
   }
@@ -178,7 +180,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
 
   @Override
   public void roleChanged(Role role) {
-    System.out.println("-- changed role to " + role);
+    log.info("Changed role to " + role);
   }
 
   public enum Command {

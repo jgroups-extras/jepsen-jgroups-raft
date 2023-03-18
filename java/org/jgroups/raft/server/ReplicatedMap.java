@@ -3,6 +3,7 @@ package org.jgroups.raft.server;
 import java.util.concurrent.TimeUnit;
 
 import org.jgroups.JChannel;
+import org.jgroups.protocols.raft.RAFT;
 import org.jgroups.raft.blocks.ReplicatedStateMachine;
 import org.jgroups.raft.exception.KeyNotFoundException;
 import org.jgroups.util.ByteArrayDataInputStream;
@@ -18,6 +19,7 @@ public class ReplicatedMap<K, V> extends ReplicatedStateMachine<K, V> {
   }
 
   @Override
+  // Caller sensitive.
   public byte[] apply(byte[] data, int offset, int length, boolean serialize_response) throws Exception {
     ByteArrayDataInputStream in = new ByteArrayDataInputStream(data, offset, length);
     byte command = in.readByte();
@@ -47,6 +49,8 @@ public class ReplicatedMap<K, V> extends ReplicatedStateMachine<K, V> {
         synchronized (map) {
           V res = map.compute(key, (ignore, curr) -> {
             if (curr == null) {
+              // If this called to restore the state machine, we should not throw an exception.
+              if (isCalledToRestoreStateMachine()) return null;
               throw new KeyNotFoundException(key);
             }
 
@@ -75,5 +79,15 @@ public class ReplicatedMap<K, V> extends ReplicatedStateMachine<K, V> {
     byte[] buf = out.buffer();
     byte[] rsp = raft.set(buf, 0, out.position(), repl_timeout, TimeUnit.MILLISECONDS);
     return Util.objectFromByteBuffer(rsp);
+  }
+
+  private boolean isCalledToRestoreStateMachine() {
+    StackTraceElement[] stacktrace = Thread.currentThread().getStackTrace();
+    for (StackTraceElement trace : stacktrace) {
+      if (trace.getClassName().equals(RAFT.class.getName()) && trace.getMethodName().equals("initStateMachineFromLog")) {
+        return true;
+      }
+    }
+    return false;
   }
 }
