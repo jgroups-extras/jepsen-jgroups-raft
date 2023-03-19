@@ -2,6 +2,79 @@
 
 We describe how to run the tests with the different setups we provide.
 
+## Linux Containers
+
+To run using Linux Containers, we required [LXD](https://linuxcontainers.org/lxd/introduction/).
+And in addition to that, Jepsen's requirements:
+
+- A [JVM](https://openjdk.java.net/install/)---version 17 or higher.
+- JNA, so the JVM can talk to your SSH.
+- [Leiningen](https://leiningen.org/): a Clojure build tool.
+- [Gnuplot](http://www.gnuplot.info/): how Jepsen renders performance plots.
+- [Graphviz](https://graphviz.org/): how Jepsen renders transactional anomalies.
+
+The host is the control node. The control node is responsible for running the tests.
+
+Now we are going to prepare the workers. Then, let's put some of the `lxc` to use.
+The first step, start a Debian 11 node:
+
+```bash
+lxc launch images:debian/11 node-1
+```
+
+We have the first node running. The next step is configuring SSH on the running worker for
+the control node to access it. To enter into the worker and prepare SSH, run:
+
+```bash
+lxc exec node-1 bash
+
+# Now running on node-1 bash, as root user.
+apt-get install openssh-server
+sed -i "s/#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+service sshd start
+```
+
+With that, we have a running SSH service on the worker. Going back to the control node,
+let's prepare the keys. On the project root, execute:
+
+```bash
+ssh-keygen -t rsa -N "" ./bin/secret/id_rsa
+```
+
+This created the public and private keys on the control node. Be careful that running the Docker
+setup might override this key. Now, we only need to transfer the public key to the worker. Do the following:
+
+```bash
+lxc exec node-1 mkdir /root/.ssh
+lxc file push ./bin/secret/id_rsa.pub node-1/root/.ssh/authorized_keys
+lxc exec node-1 chown root:root /root/.ssh/authorized_keys
+```
+
+This should leave us with a ready worker node. Back on the control node, SSH into the worker by running:
+
+```bash
+ssh -i ./bin/secret/id_rsa root@node-1
+```
+
+Notice that we need to point to the generated key. Now, to run the test, we need to create additional workers.
+The good news is that we can copy, and we can do that by executing:
+
+```bash
+lxc copy node-1 node-2
+lxc start node-2
+```
+
+To leave everything ready to run the test, go to the control node and SSH into each worker to add it to
+the known hosts. Then proceed to run the test:
+
+```bash
+lein run test --node node-1 --node node-2 --ssh-private-key ./bin/secret/id_rsa --time-limit 60 --concurrency 100
+```
+
+On the first run, workers download more dependencies, so it might take some time. If the test times out starting,
+you can execute the command again.
+
+
 ## Docker & Docker Compose
 
 This setup will start four containers using docker-compose. One node is the control, and the other

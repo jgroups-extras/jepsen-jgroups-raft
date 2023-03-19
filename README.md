@@ -13,7 +13,10 @@ JDK, JNA, Leiningen, Gnuplot, and Graphviz.
 We provide different setups so the test can be reproducible by anyone interested.
 Each will have requirements to run. We provide:
 
+* [Linux Containers](/doc/running.md#linux-containers)
 * [Docker & Docker Compose](/doc/running.md#docker--docker-compose)
+
+For development purposes, we recommend running with LXC.
 
 ## Running
 
