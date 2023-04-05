@@ -93,7 +93,7 @@
       (c/exec :nc :-z host port)
       nil)
     {:log-message (str "Waiting for server " host ":" port)
-     :timeout 30000}))
+     :timeout 20000}))
 
 (defn start!
   "Start the server in listen mode."
@@ -103,6 +103,9 @@
         ; We add the current node to the list of members, otherwise,
         ; the node will not be able to start.
         (let [members (->> (concat @(:members test) [node])
+                           ; If @(:member test) already contains the current node, we must remove
+                           ; the duplication.
+                           distinct
                            (str/join ","))]
           (info "Starting node" node "with members" members)
           (let [daemon (cu/start-daemon! {:chdir   dir
@@ -114,6 +117,8 @@
                                          :-n node
                                          :-p remote-props-file
                                          :>> log-file)]
+            ; We wait for the server to be available before returning.
+            ; This can cause a timeout during startup.
             (await-available node 9000)
             (info "Started node" node)
             daemon))))
@@ -145,10 +150,11 @@
   [test]
   (let [raw-members (members test)
         members (->> raw-members set)]
+    (info "Membership retrieved from" (first @(:members test)) "is" (pr-str members))
     (if (some str/blank? members)
       (throw+ {:type ::blank-member-name
                :members raw-members}))
-    (do (info "Membership retrieved from" (first @(:members test)) "is" (pr-str members))
+    (do
         ; Observe that a node could have been removed from the cluster,
         ; so it could return an empty list when queried. To avoid confusion,
         ; we join the existing value with the one returned from the node.

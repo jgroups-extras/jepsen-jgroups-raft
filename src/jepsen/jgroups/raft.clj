@@ -3,16 +3,13 @@
     [clojure.tools.logging :refer :all]
     (jepsen
       [cli :as cli]
-      [tests :as tests]
-      (independent :as independent))
+      [tests :as tests])
     [jepsen.checker :as checker]
-    [jepsen.checker.timeline :as timeline]
     [jepsen.generator :as gen]
-    [jepsen.jgroups.client :as client]
+    [jepsen.jgroups.nemesis.nemesis :as ln]
     [jepsen.jgroups.server :as server]
-    [jepsen.os.debian :as debian]
-    [knossos.model :as model]
-    [jepsen.jgroups.nemesis.nemesis :as ln]))
+    [jepsen.jgroups.workload.workload :as lw]
+    [jepsen.os.debian :as debian]))
 
 (def cli-opts
   "Additional command line options."
@@ -26,19 +23,29 @@
 
    [nil "--ops-per-key NUM" "Maximum number of operations on any given key."
     :default 100
-    :parse-fn parse-long
-    :validate [pos? "Must be a positive integer."]]
+    :parse-fn parse-long]
 
    [nil "--nemesis FAULTS" "A comma-separated list of nemesis"
-    :default "none"
+    :default {}
     :parse-fn ln/parse-nemesis-spec
     :validate [(partial every? (fn [n]
                                  (or (ln/nemeses n)
                                      (ln/special-nemeses n))))
                (cli/one-of (concat ln/nemeses (keys ln/special-nemeses)))]]
 
+   [nil "--workload NAME" "Name of the workload to run."
+    :default :single-register
+    :parse-fn keyword
+    :validate [(partial contains? lw/all-workloads)
+               (cli/one-of lw/all-workloads)]]
+
    ["-i" "--interval SECONDS" "How long between nemesis operations for each class of fault."
     :default 5
+    :parse-fn read-string
+    :validate [pos? "Must be positive"]]
+
+   [nil "--operation-timeout SECONDS" "How long to wait for an operation to complete."
+    :default 10
     :parse-fn read-string
     :validate [pos? "Must be positive"]]])
 
@@ -51,7 +58,8 @@
     :workload     Name of the workload to run."
   [opts]
   (let [db (server/db opts)
-        nemesis (ln/setup-nemesis opts db)]
+        nemesis (ln/setup-nemesis opts db)
+        workload ((lw/workloads (:workload opts)) opts)]
     (merge tests/noop-test
            opts
            {:pure-generators true
@@ -59,33 +67,26 @@
             :os              debian/os
             :db              db
             :members         (atom (into (sorted-set) (:nodes opts)))
-            :client          (client/->ReplicatedStateMachineClient nil)
             :nemesis         (:nemesis nemesis)
+            :client          (:client workload)
             :checker         (checker/compose
                                {:perf       (checker/perf {:nemeses (:perf nemesis)})
                                 :exceptions (checker/unhandled-exceptions)
-                                :indep      (independent/checker
-                                              (checker/compose
-                                                {:linear   (checker/linearizable {:model     (model/cas-register)
-                                                                                  :algorithm :linear})
-                                                 :timeline (timeline/html)}))})
+                                :stats      (checker/stats)
+                                :workload   (:checker workload)})
             :generator       (gen/phases
-                               (->> (independent/concurrent-generator
-                                      10
-                                      (range)
-                                      (fn [k]
-                                        (->> (gen/mix [client/r client/w client/cas])
-                                             (gen/stagger (/ (:rate opts)))
-                                             (gen/limit (:ops-per-key opts)))))
+                               (->> (:generator workload)
+                                    (gen/stagger (/ (:rate opts)))
                                     (gen/nemesis
                                       (gen/phases
-                                        (gen/sleep 5)
+                                        (gen/sleep (:interval opts))
                                         (:generator nemesis)))
                                     (gen/time-limit (:time-limit opts)))
                                (gen/log "Healing cluster")
                                (gen/nemesis (:final-generator nemesis))
                                (gen/log "Waiting for recovery")
-                               (gen/sleep 10))
+                               (gen/sleep 10)
+                               (gen/clients (:final-generator workload)))
             :quorum-reads    (not (:stale-reads opts))})))
 
 (defn -main

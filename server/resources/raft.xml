@@ -58,7 +58,7 @@
     <raft.RAFT members="${raft_members:A,B,C}"
                log_class="org.jgroups.protocols.raft.FileBasedLog"
                raft_id="${raft_id}"
-               log_dir="${log_dir}" />
+               log_dir="/tmp" />
     <raft.REDIRECT/>
     <raft.CLIENT bind_addr="0.0.0.0" />
 </config>

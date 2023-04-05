@@ -14,6 +14,8 @@ import java.util.concurrent.locks.LockSupport;
 import org.jgroups.Address;
 import org.jgroups.blocks.cs.Receiver;
 import org.jgroups.blocks.cs.TcpClient;
+import org.jgroups.logging.Log;
+import org.jgroups.logging.LogFactory;
 import org.jgroups.raft.data.Request;
 import org.jgroups.raft.data.Response;
 import org.jgroups.raft.server.Server;
@@ -31,6 +33,8 @@ import org.jgroups.util.Util;
  * This implementation is based on {@link ReplicatedStateMachineClient}.
  */
 public class SyncReplicatedStateMachineClient implements Receiver, AutoCloseable {
+
+  protected final Log log = LogFactory.getLog(getClass());
 
   private final String name;
   private final Map<UUID, CompletableFuture<String>> requests = new ConcurrentHashMap<>();
@@ -109,9 +113,9 @@ public class SyncReplicatedStateMachineClient implements Receiver, AutoCloseable
       client.send(out.buffer(), 0, out.position());
       return cf.get(timeout, TimeUnit.MILLISECONDS);
     } catch (Exception e) {
-      Throwable re = extract(e);
-      if (re != null) throw re;
-      throw e;
+      Throwable t = handleThrowable(e);
+      log.info("[%s] Exception while sending request: %s", name, t);
+      throw t;
     }
   }
 
@@ -160,6 +164,12 @@ public class SyncReplicatedStateMachineClient implements Receiver, AutoCloseable
     return uuid;
   }
 
+  private Throwable handleThrowable(Throwable t) {
+    Throwable re = extract(t);
+    if (re != null) return re;
+    return t;
+  }
+
   @Override
   public void close() {
     System.out.printf("Stopping client at [%s:%d]\n", server, serverPort);
@@ -199,6 +209,8 @@ public class SyncReplicatedStateMachineClient implements Receiver, AutoCloseable
       LockSupport.parkNanos(sleepNanos);
       sleepNanos += initialSleepNanos;
     }
+
+    log.info("Failed connecting [%s] to [%s:%d]", name, server, serverPort);
     throw new ConnectException("Failed connecting client to " + server + ":" + serverPort);
   }
 }

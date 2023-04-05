@@ -1,17 +1,19 @@
-(ns jepsen.jgroups.client
-  "The state machine client. This client executes the operations on a single register."
+(ns jepsen.jgroups.workload.register
   (:require
     [clojure.tools.logging :refer :all]
     (jepsen
       [client :as client])
+    [jepsen.checker :as checker]
+    [jepsen.checker.timeline :as timeline]
+    [jepsen.generator :as gen]
     [jepsen.independent :as independent]
+    [knossos.model :as model]
     [slingshot.slingshot :refer [try+]])
   (:import
     (java.net ConnectException InetAddress SocketException)
     (java.util.concurrent TimeoutException)
     (org.jgroups.protocols.raft RaftLeaderException)
-    (org.jgroups.raft.client SyncReplicatedStateMachineClient)
-    (org.jgroups.raft.exception KeyNotFoundException)))
+    (org.jgroups.raft.client SyncReplicatedStateMachineClient)))
 
 (defn parse-response
   "Parse response from String to long."
@@ -58,7 +60,8 @@
     (let [c (doto (SyncReplicatedStateMachineClient. node)
               ; A small timeout can cause a lot of pressure for the model checker.
               ; Small here would be less than or equal to the nemesis interval.
-              (.withTimeout (long (:interval test 5000) + 1000))
+              ; We are using the double of the nemesis interval or 10s.
+              (.withTimeout (long (* 1000 (:operation-timeout test))))
               (.withTargetAddress (InetAddress/getByName node))
               (.withTargetPort 9000))]
       (.start c)
@@ -76,14 +79,11 @@
           :write (do (raft-write conn k v)
                      (assoc op :type :ok))
 
-          :cas (let [[old new] v]
-                 (assoc op :type (if (raft-cas conn k old new)
-                                   :ok
-                                   :fail))))
-
-        ; Thrown by the CAS operation.
-        (catch KeyNotFoundException ex
-          (assoc op :type :fail, :error :key-not-found))
+          :cas (let [[old new] v
+                     succeeded (raft-cas conn k old new)]
+                 (if succeeded
+                   (assoc op :type :ok, :value (independent/tuple k [old new]))
+                   (assoc op :type :fail, :error :cas-fail))))
 
         ; Timeout can have different causes, and as such, we are not sure
         ; if an operation was applied or not.
@@ -93,18 +93,18 @@
           (assoc op
             :type (if (= :read (:f op)) :fail :info) :error :timeout))
 
+        ; Connection exception means we were unable to connect to the remote,
+        ; so we can be sure we failed. There is no way we might have applied
+        ; operation.
+        (catch ConnectException ex
+          (assoc op :type :fail, :error :connect))
+
         ; We can not tell if a change was applied or not. We only set :fail
         ; for :read operations, since they do not change the state machine.
         ; For all else, we use :info.
         (catch SocketException ex
           (assoc op
             :type (if (= :read (:f op)) :fail :info) :error :socket))
-
-        ; Connection exception means we were unable to connect to the remote,
-        ; so we can be sure we failed. There is no way we might have applied
-        ; operation.
-        (catch ConnectException ex
-          (assoc op :type :fail, :error :connect))
 
         ; This means we were able to send the message, but since no leader
         ; exists to handle the operation, we receive the exception.
@@ -123,3 +123,23 @@
 
   (close! [_ test]
     (.close conn)))
+
+
+(defn workload
+  "Create a workload for registers. This tests linearizable reads, writes, and
+  compare-and-set operations on independent keys."
+  [opts]
+  (let [n (count (:nodes opts))]
+    {:client    (ReplicatedStateMachineClient. nil)
+     :checker   (independent/checker
+                  (checker/compose
+                    {:timeline (timeline/html)
+                     :linear   (checker/linearizable
+                                 {:model     (model/cas-register)
+                                  :algorithm :linear})}))
+     :generator (independent/concurrent-generator
+                  (min (* 2 n) (:concurrency opts))
+                  (if (= (:workload opts) :single-register) (range 1) (range))
+                  (fn [k]
+                    (->> (gen/mix [r w cas])
+                         (if (pos? (:ops-per-key opts)) (partial gen/limit (:ops-per-key opts))))))}))

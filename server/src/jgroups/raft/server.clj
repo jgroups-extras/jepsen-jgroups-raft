@@ -2,7 +2,8 @@
   "A wrapper around the server. This receives the options and initializes the state machine."
   (:gen-class)
   (:require
-    [clojure.tools.cli :as cli])
+    [clojure.tools.cli :as cli]
+    [clojure.tools.logging :refer :all])
   (:import (java.net InetAddress)
            (org.jgroups.raft.server Server)))
 

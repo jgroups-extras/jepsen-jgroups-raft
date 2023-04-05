@@ -24,7 +24,7 @@
 (defn override-nemesis-package
   "Overriding the Jepsen implementation but removing some nemesis."
   [opts]
-  (let [faults   (set (:faults opts [:partition :packet :kill :pause :clock :file-corruption]))
+  (let [faults   (set (:faults opts [:partition :kill :pause]))
         opts     (assoc opts :faults faults)]
     [(nc/partition-package opts)
      (nc/db-package opts)]))

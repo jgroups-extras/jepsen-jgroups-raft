@@ -33,7 +33,7 @@ import org.jgroups.util.Util;
  *   <li>{@link Server.Command#PUT}: Maps a key to a value and returns null.</li>
  *   <li>{@link Server.Command#GET}: Retrieve the value mapped to the key.</li>
  *   <li>{@link Server.Command#CAS}. Compare-and-set the key returns a boolean indicating if the
- *    operation succeeded and may throw an exception if the key does not exist.</li>
+ *    operation succeeded.</li>
  * </ul>
  *
  * This implementation is based on {@link ReplicatedStateMachineDemo}.
@@ -56,7 +56,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     try (ByteArrayDataInputStream in = new ByteArrayDataInputStream(buf, offset, length)) {
       receive(sender, in);
     } catch (Exception e) {
-      e.printStackTrace();
+      log.error("Error receiving data from %s", sender, e);
     }
   }
 
@@ -92,7 +92,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
           log.info("CAS: %s (%s) -> (%s)? %s", key, from, to, cas);
           yield new Response(uuid, String.valueOf(cas));
         } catch (Exception e) {
-          log.info("CAS: %s unknown key", key);
+          log.error("CAS failed: %s", key, e);
           yield new Response(uuid, extractCause(e));
         }
       }
@@ -121,6 +121,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
 
   public Server withName(String name) {
     this.name = name;
+    System.getProperties().put("raft_id", name);
     return this;
   }
 
@@ -130,7 +131,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
   }
 
   public Server withMembers(String members) {
-    log.info("-- setting members: " + members);
+    log.info("Setting members: " + members);
     System.getProperties().put("raft_members", members);
     return this;
   }
@@ -141,7 +142,12 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     channel = new JChannel(props).name(name);
     rsm = new ReplicatedMap<>(channel);
     rsm.raftId(name).timeout(timeout);
-    channel.connect("rsm");
+    try {
+      channel.connect("rsm");
+    } catch (Exception e) {
+      log.error("Error connecting to channel", e);
+      throw e;
+    }
     Util.registerChannel(rsm.channel(), "rsm");
     rsm.addRoleChangeListener(this);
 
