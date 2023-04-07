@@ -10,12 +10,12 @@ import org.jgroups.util.Util;
 
 public class Response implements SizeStreamable {
   private UUID uuid;
-  private String response;
+  private Object response;
   private Throwable failure;
 
   public Response() { }
 
-  public Response(UUID uuid, String response) {
+  public Response(UUID uuid, Object response) {
     this.uuid = uuid;
     this.response = response;
     this.failure = null;
@@ -31,8 +31,8 @@ public class Response implements SizeStreamable {
     return uuid;
   }
 
-  public String getResponse() {
-    return response;
+  public <T> T getResponse() {
+    return (T) response;
   }
 
   public Throwable getFailure() {

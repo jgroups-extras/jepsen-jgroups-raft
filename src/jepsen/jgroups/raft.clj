@@ -23,7 +23,8 @@
 
    [nil "--ops-per-key NUM" "Maximum number of operations on any given key."
     :default 100
-    :parse-fn parse-long]
+    :parse-fn parse-long
+    :validate [pos? "Must be a positive integer."]]
 
    [nil "--nemesis FAULTS" "A comma-separated list of nemesis"
     :default {}
@@ -82,7 +83,8 @@
                                         (gen/sleep (:interval opts))
                                         (:generator nemesis)))
                                     (gen/time-limit (:time-limit opts)))
-                               (gen/log "Healing cluster")
+                               (gen/log "Waiting and then healing cluster")
+                               (gen/sleep 10)
                                (gen/nemesis (:final-generator nemesis))
                                (gen/log "Waiting for recovery")
                                (gen/sleep 10)

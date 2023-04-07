@@ -12,7 +12,14 @@
 (def special-nemeses
   "A map of special nemesis names to a collection of faults."
   {:none []
-   :all  [:pause :kill :partition :member]})
+   :all  [:pause :kill :partition]
+
+   ; Hell might create scenarios a bit hard to cover in implementation, it is still safe, though!
+   ; For example, membership changes goes through consensus and thus require a majority to be alive.
+   ; We might kill a node while doing an operation and making it impossible to recover full membership.
+   ; This is a valid scenario, but it just causes all operations to fail, which is not that interesting.
+   ; With some luck, the cluster get back to its feet and we can continue operating.
+   :hell [:pause :kill :partition :member]})
 
 (defn parse-nemesis-spec
   "Takes the comma separated list of nemesis names and returns the keyword faults."

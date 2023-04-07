@@ -2,7 +2,7 @@ package org.jgroups.raft.server;
 
 import java.io.DataInput;
 import java.net.InetAddress;
-import java.nio.ByteBuffer;
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 
 import org.jgroups.Address;
@@ -14,12 +14,9 @@ import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
 import org.jgroups.protocols.raft.RAFT;
 import org.jgroups.protocols.raft.Role;
-import org.jgroups.raft.data.Request;
-import org.jgroups.raft.data.Response;
 import org.jgroups.raft.demos.ReplicatedStateMachineDemo;
 import org.jgroups.stack.IpAddress;
 import org.jgroups.util.ByteArrayDataInputStream;
-import org.jgroups.util.UUID;
 import org.jgroups.util.Util;
 
 /**
@@ -47,7 +44,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
   private long timeout;
 
   private JChannel channel;
-  private ReplicatedMap<String, String> rsm;
+  private TestStateMachine stateMachine;
   private BaseServer server;
 
 
@@ -61,44 +58,8 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
   }
 
   @Override
-  public void receive(Address sender, ByteBuffer buf) {
-    Util.bufferToArray(sender, buf, this);
-  }
-
-  @Override
   public void receive(Address address, DataInput in) throws Exception {
-    int ordinal = in.readByte();
-    String key = Util.objectFromStream(in);
-
-    Response res = switch (Command.values()[ordinal]) {
-      case PUT -> {
-        Request request = Util.objectFromStream(in);
-        log.info("PUT: %s --> %s", key, request);
-        put(key, request.getValue());
-        yield new Response(request.getUuid(), (String) null);
-      }
-      case GET -> {
-        log.info("GET: " + key);
-        UUID uuid = Util.objectFromStream(in);
-        boolean quorum = in.readBoolean();
-        yield quorum ? new Response(uuid, rsm.quorumGet(key)) : new Response(uuid, rsm.get(key));
-      }
-      case CAS -> {
-        String from = Util.objectFromStream(in);
-        String to = Util.objectFromStream(in);
-        UUID uuid = Util.objectFromStream(in);
-        try {
-          boolean cas = rsm.compareAndSet(key, from, to);
-          log.info("CAS: %s (%s) -> (%s)? %s", key, from, to, cas);
-          yield new Response(uuid, String.valueOf(cas));
-        } catch (Exception e) {
-          log.error("CAS failed: %s", key, e);
-          yield new Response(uuid, extractCause(e));
-        }
-      }
-    };
-
-    sendResponse(address, res);
+    sendResponse(address, stateMachine.receive(in));
   }
 
   @Override
@@ -136,21 +97,41 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     return this;
   }
 
-  public Server start(InetAddress bind, int port) throws Exception {
+  public Server prepareReplicatedMapStateMachine() throws Exception {
     if (channel != null) throw new IllegalStateException("Channel is already running");
-
     channel = new JChannel(props).name(name);
-    rsm = new ReplicatedMap<>(channel);
-    rsm.raftId(name).timeout(timeout);
+    stateMachine = new ReplicatedMap<String, String>(channel);
+    ((ReplicatedMap<String, String>) stateMachine)
+        .raftId(name)
+        .timeout(timeout)
+        .addRoleChangeListener(this);
+    return this;
+  }
+
+  public Server prepareCounterStateMachine() throws Exception {
+    if (channel != null) throw new IllegalStateException("Channel is already running");
+    channel = new JChannel(props).name(name);
+    stateMachine = new ReplicatedCounter(channel);
+    ((ReplicatedCounter) stateMachine)
+        .raftId(name)
+        .replTimeout(timeout)
+        .addRoleChangeListener(this);
+    return this;
+  }
+
+  public Server start(InetAddress bind, int port) throws Exception {
+    Objects.requireNonNull(channel, "Channel is null");
+    Objects.requireNonNull(stateMachine, "State machine is null");
+
     try {
+      log.info("Connecting %s with members %s", name, System.getProperty("raft_members"));
       channel.connect("rsm");
     } catch (Exception e) {
       log.error("Error connecting to channel", e);
       throw e;
     }
-    Util.registerChannel(rsm.channel(), "rsm");
-    rsm.addRoleChangeListener(this);
 
+    Util.registerChannel(channel, "rsm");
     server = new TcpServer(bind, port).receiver(this);
     server.start();
     int local_port=server.localAddress() instanceof IpAddress ? ((IpAddress)server.localAddress()).getPort(): 0;
@@ -159,13 +140,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     return this;
   }
 
-  private void put(String key, String value) {
-    try {
-      rsm.put(key, value);
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
-  }
+
 
   private void sendResponse(Address target, Object res) {
     try {
@@ -176,7 +151,7 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     }
   }
 
-  private static Throwable extractCause(Throwable t) {
+  public static Throwable extractCause(Throwable t) {
     Throwable c = t.getCause();
     while (c instanceof ExecutionException && c.getCause() != null)
       c = t.getCause();

@@ -20,7 +20,7 @@
     [jepsen.core :as jepsen]
     [jepsen.db :as db]
     [jepsen.os.debian :as debian]
-    [slingshot.slingshot :refer [throw+]]))
+    [slingshot.slingshot :refer [throw+ try+]]))
 
 (def dir "/opt/raft")
 (def remote-jar (str dir "/server.jar"))
@@ -37,28 +37,6 @@
    "grep" "'leader='"
    "|"
    "sed" "-e" "'s/RAFT={leader=\\([a-z0-9A-Z\\.]\\+\\)}/\\1/g'"])
-
-(def get-current-members
-  ["java" "-cp" remote-jar "-Dcom.sun.management.jmxremote" "org.jgroups.tests.Probe" "jmx=RAFT.members"
-   "|"
-   "grep" "'members='"
-   "|"
-   "sed" "-e" "'s/RAFT={members=\\[\\(.*\\)\\]}/\\1/g'"
-   "|"
-   "sed" "-e" "'s/,//g'"])
-
-(def base-client-command
-  ["java" "-cp" remote-jar "org.jgroups.raft.client.Client" "-p" "9000"])
-
-(defn add-node-command
-  "Command to add a node."
-  [node]
-  (concat base-client-command ["-add" node]))
-
-(defn remove-node-command
-  "Command to remove a node."
-  [node]
-  (concat base-client-command ["-remove" node]))
 
 (defn install-jdk17!
   "Installs an openjdk jdk17."
@@ -85,15 +63,66 @@
   (c/cd dir
         (c/upload (.getCanonicalPath (io/file local-server-jar)) remote-jar)))
 
+(defn is-alive?
+  "Checks if the node is available at the port."
+  [host port]
+  (c/exec :nc :-z host port)
+  true)
+
+(defn get-pid
+  "Gets the pid of the server."
+  []
+  (Integer/parseInt (c/exec :cat pid-file)))
+
+(defn is-pid-running?
+  "Checks if the pid is running."
+  []
+  (try
+    (c/exec :ps :-p (get-pid))
+    true
+    (catch Exception e
+      false)))
+
+(defn is-alive?*
+  "Check if the node is available at the port without throwing."
+  [host port]
+  (try (is-alive? host port) (catch Exception e# false)))
+
 (defn await-available
   "Blocks until the server port is bound."
   [host port]
   (util/await-fn
     (fn check-port []
-      (c/exec :nc :-z host port)
+      (when (is-pid-running?)
+        (is-alive? host port))
       nil)
     {:log-message (str "Waiting for server " host ":" port)
      :timeout 20000}))
+
+(defn identify-state-machine
+  "Identify the state machine from the workload."
+  [opts]
+  (case (:workload opts)
+    :counter #"counter"
+    #"register"))
+
+(defn stop!
+  "Stop the ReplicatedStateMachineDemo."
+  [node]
+  (info "Stopping node" node)
+  (c/cd dir
+        (c/su
+          (cu/stop-daemon! "/usr/bin/java" pid-file))))
+
+(defn definitely-stop!
+  "Keep trying to stop the server until nothing is bound to the port."
+  [node]
+  (util/timeout 20000 (throw+ {:type ::stop-timeout
+                               :message (str "Couldn't stop server " node " after 20 seconds")})
+                (while (is-alive?* node 9000)
+                  (stop! node)
+                  (info "Waiting for server" node " to stop")
+                  (Thread/sleep 1000))))
 
 (defn start!
   "Start the server in listen mode."
@@ -108,111 +137,27 @@
                            distinct
                            (str/join ","))]
           (info "Starting node" node "with members" members)
-          (let [daemon (cu/start-daemon! {:chdir   dir
-                                          :logfile log-file
-                                          :pidfile pid-file}
-                                         "/usr/bin/java"
-                                         :-jar remote-jar
-                                         :--members members
-                                         :-n node
-                                         :-p remote-props-file
-                                         :>> log-file)]
-            ; We wait for the server to be available before returning.
-            ; This can cause a timeout during startup.
-            (await-available node 9000)
-            (info "Started node" node)
-            daemon))))
-
-(defn stop!
-  "Stop the ReplicatedStateMachineDemo."
-  [node]
-  (info "Stopping node" node)
-  (c/cd dir
-        (c/su
-          (cu/stop-daemon! pid-file))))
-
-(defn members
-  "Use the probe to retrieve the membership from all nodes."
-  [test]
-  (info "Selecting first of " @(:members test))
-  (->> (c/on-many @(:members test)
-                  (-> (apply c/exec* get-current-members)
-                      (str/split #"\r\n")))
-       (map (fn [[_ v]] (str/join " " v)))
-       (map #(str/split % #" "))
-       flatten
-       (filter #(not (str/blank? %)))
-       distinct))
-
-(defn refresh-members!
-  "Takes a test and updates the current cluster membership, based on querying
-  nodes presently in the test's cluster."
-  [test]
-  (let [raw-members (members test)
-        members (->> raw-members set)]
-    (info "Membership retrieved from" (first @(:members test)) "is" (pr-str members))
-    (if (some str/blank? members)
-      (throw+ {:type ::blank-member-name
-               :members raw-members}))
-    (do
-        ; Observe that a node could have been removed from the cluster,
-        ; so it could return an empty list when queried. To avoid confusion,
-        ; we join the existing value with the one returned from the node.
-        (swap! (:members test) #(set (concat %1 %2)) members))))
-
-(defn addable-nodes
-  "What nodes could be added to the cluster"
-  [test]
-  (remove @(:members test) (:nodes test)))
-
-(defn grow!
-  "Adds a random node from the test to the cluster, if possible."
-  [test]
-  (refresh-members! test)
-
-  (if-let [addable-nodes (seq (addable-nodes test))]
-    (let [new-node (rand-nth addable-nodes)]
-      (info :adding new-node)
-
-      ; First might not be running?
-      (c/on (first @(:members test))
-            (->> (add-node-command new-node)
-                 (apply c/exec*)))
-
-      ; Update the test map to include the new node.
-      (swap! (:members test) conj new-node)
-
-      (c/on-nodes test [new-node]
-                  (fn [test node]
-                    (info "Growing!" :start! (class (:db test)) (pr-str (:db test)))
-                    (db/start! (:db test) test node))))))
-
-(defn shrink!
-  "Removes a random node from the cluster, if possible."
-  [test]
-  (refresh-members! test)
-
-  (if (< (count @(:members test)) 2)
-    (do
-      (info "Can't shrink, only one node left")
-      :too-few-members-to-shrink)
-
-    (let [node (rand-nth (vec @(:members test)))]
-      (info :removing node)
-
-      ; Might not be running on the first?
-      (c/on (first @(:members test))
-            (->> (remove-node-command node)
-                 (apply c/exec*)))
-
-      (c/on-nodes test [node]
-                  (fn [test node]
-                    (db/kill! (:db test) test node)))
-
-      ; Finally, remove the node from the list.
-      (swap! (:members test) disj node)
-      (info "After removal, membership is" @(:members test))
-      node)))
+          ; If for some reason the PID is still running and the port is bound, we can skip.
+          (if (or (is-pid-running?) (is-alive?* node 9000))
+            (do
+              (info "Process" node "is already running!")
+              :already-running)
+            (let [daemon (cu/start-daemon! {:chdir   dir
+                                            :logfile log-file
+                                            :pidfile pid-file}
+                                           "/usr/bin/java"
+                                           :-jar remote-jar
+                                           :--members members
+                                           :-n node
+                                           :-p remote-props-file
+                                           :-s (identify-state-machine test)
+                                           :>> log-file)]
+              (when (= daemon :started)
+                ; We wait for the server to be available before returning.
+                ; This can cause a timeout during startup.
+                (await-available node 9000)
+                (info "Started node" node))
+              daemon)))))
 
 (defrecord Server []
   db/DB
@@ -226,9 +171,10 @@
     (start! test node))
 
   (teardown! [_ test node]
+    (info :teardown node)
     (stop! node)
     (c/su
-      (c/exec :rm :-rf log-file pid-file remote-jar (str "/tmp/" node ".log"))))
+      (c/exec :rm :-rf log-file remote-jar (str "/tmp/" node ".log"))))
 
   db/LogFiles
   (log-files [_ test node]
@@ -247,18 +193,27 @@
          (filter #(not (= % "null")))
          distinct))
 
-  db/Process
+  db/Kill
   (start! [_ test node]
     (info "Starting node" node)
-    (let [daemon-result (start! test node)]
-      (info "Starting node" node " with daemon result" daemon-result)
-      {:initial-cluster-state (if (= :started daemon-result)
-                                :new
-                                :existing)
-       :nodes @(:members test)}))
+    (try+
+      (let [daemon-result (start! test node)]
+        (info "Starting node" node "with daemon result" daemon-result)
+        {:initial-cluster-state (if (= :started daemon-result)
+                                  :new
+                                  :existing)
+         :nodes @(:members test)})
+
+      ; This is unexpected, but we can't do much about it.
+      ; For some reason the node didn't start.
+      (catch [:type :jepsen.util/timeout] e#
+        (error "Timeout starting node" node e#)
+        {:initial-cluster-state :failed
+         :nodes @(:members test)})))
 
   (kill! [_ test node]
-    (stop! node))
+    (definitely-stop! node)
+    node)
 
   db/Pause
   (pause! [_ test node] (c/su (cu/grepkill! :stop "jgroups")))

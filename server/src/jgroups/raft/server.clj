@@ -3,17 +3,22 @@
   (:gen-class)
   (:require
     [clojure.tools.cli :as cli]
-    [clojure.tools.logging :refer :all])
-  (:import (java.net InetAddress)
+    [clojure.tools.logging :refer :all]
+    [slingshot.slingshot :refer [try+]])
+  (:import (java.lang ProcessHandle)
+           (java.net InetAddress)
            (org.jgroups.raft.server Server)))
 
 (def opt-spec
   [["-m" "--members MEMBER-LIST" "Comma-separated list of peers to connect to"
-    :parse-fn (fn [m] m)]
+    :parse-fn identity]
    ["-n" "--name NAME" "String with the node's name"
-    :parse-fn (fn [n] n)]
+    :parse-fn identity]
    ["-p" "--props PATH" "Path to the configuration file"
-    :parse-fn (fn [p] p)]])
+    :parse-fn identity]
+   ["-s" "--state-machine NAME" "State machine to execute."
+    :default :register
+    :parse-fn keyword]])
 
 (defn -main
   "Run and configure the server."
@@ -30,4 +35,11 @@
             (.withMembers members)
             (.withProps props)
             (.withTimeout (long 30000)))]
-    (.start s (InetAddress/getByName name) 9000)))
+    (case (:state-machine options)
+      :register (.prepareReplicatedMapStateMachine s)
+      :counter  (.prepareCounterStateMachine s))
+    (try+
+      (.start s (InetAddress/getByName name) 9000)
+      (catch Throwable t
+        (error "Failed starting" (.pid (ProcessHandle/current)) "and exiting..." t)
+        (System/exit 1)))))

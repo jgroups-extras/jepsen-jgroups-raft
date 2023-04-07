@@ -10,5 +10,5 @@
                  [dom-top "1.0.8"]
                  [jepsen "0.3.1"]
                  [org.jgroups/jgroups "5.2.12.Final"]
-                 [org.jgroups/jgroups-raft "1.0.10.Final"]]
+                 [org.jgroups/jgroups-raft "1.0.11.Final-SNAPSHOT"]]
   :repl-options {:init-ns jepsen.jgroups.raft})
