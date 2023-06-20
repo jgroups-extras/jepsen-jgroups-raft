@@ -92,7 +92,7 @@
   "Maybe limit the operation per key. If the initial configuration has a negative value,
   we do not limit the operations."
   [opts gen]
-  (if (= (:workload :multi-register))
+  (if (= :workload :multi-register)
     (gen/limit (:ops-per-key opts) gen)
     (identity gen)))
 
