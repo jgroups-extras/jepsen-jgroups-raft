@@ -24,8 +24,7 @@ import org.jgroups.util.Util;
  * <p>
  * This is deployed in the remote nodes and is our entry point to testing our {@link RAFT} implementation.
  * This is designed to test a replicated {@link java.util.Map}, which must be consistent across all nodes.
- * Here consistency means that all nodes must hold the same subset of data. Some nodes might fall behind,
- * but they should be able the catch-up. The operations we test are:
+ * Here consistency means that all nodes must hold the same subset of data. The operations we test are:
  * <ul>
  *   <li>{@link Server.Command#PUT}: Maps a key to a value and returns null.</li>
  *   <li>{@link Server.Command#GET}: Retrieve the value mapped to the key.</li>

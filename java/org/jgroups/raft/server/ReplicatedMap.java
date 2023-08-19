@@ -19,66 +19,42 @@ import static org.jgroups.raft.server.Server.extractCause;
 public class ReplicatedMap<K, V> extends ReplicatedStateMachine<K, V> implements TestStateMachine {
 
   protected final Log log = LogFactory.getLog(getClass());
-  public static final byte GET = 3;
   public static final byte CAS = 4;
 
   public ReplicatedMap(JChannel ch) {
     super(ch);
+    allow_dirty_reads = false;
   }
 
   @Override
   public byte[] apply(byte[] data, int offset, int length, boolean serialize_response) throws Exception {
-    ByteArrayDataInputStream in = new ByteArrayDataInputStream(data, offset, length);
-    byte command = in.readByte();
+    if (data[offset] == CAS) {
+      ByteArrayDataInputStream in = new ByteArrayDataInputStream(data, offset + 1, length);
+      K key = Util.objectFromStream(in);
+      V from = Util.objectFromStream(in);
+      V to = Util.objectFromStream(in);
+      synchronized (map) {
+        V res = map.compute(key, (ignore, curr) -> {
+          if (curr == null) {
+            // We do not want to create a new entry.
+            // We return false for this case.
+            return null;
+          }
 
-    switch (command) {
-      case PUT -> {
-        K key = Util.objectFromStream(in);
-        V val = Util.objectFromStream(in);
-        V old;
-        synchronized (map) {
-          old = map.put(key, val);
-        }
-
-        return old == null ? null
-            : serialize_response ? Util.objectToByteBuffer(old) : null;
-      }
-      case GET -> {
-        K key = Util.objectFromStream(in);
-        synchronized (map) {
-          return Util.objectToByteBuffer(map.get(key));
-        }
-      }
-      case CAS -> {
-        K key = Util.objectFromStream(in);
-        V from = Util.objectFromStream(in);
-        V to = Util.objectFromStream(in);
-        synchronized (map) {
-          V res = map.compute(key, (ignore, curr) -> {
-            if (curr == null) {
-              // We do not want to create a new entry.
-              // We return false for this case.
-              return null;
-            }
-
-            return curr.equals(from)
-                ? to
-                : curr;
-          });
-          return Util.objectToByteBuffer(res == to && to != null);
-        }
-      }
-      default -> {
-        log.error("Unknown command: (%d:%d) %d", offset, length, command);
-        throw new IllegalStateException(String.format("Unknown command: %d", command));
+          return curr.equals(from)
+              ? to
+              : curr;
+        });
+        return Util.objectToByteBuffer(res == to && to != null);
       }
     }
+
+    return super.apply(data, offset, length, serialize_response);
   }
 
   public Response receive(DataInput in) throws Exception {
     int ordinal = in.readByte();
     K key = Util.objectFromStream(in);
-
     return switch (Server.Command.values()[ordinal]) {
       case PUT -> {
         Request request = Util.objectFromStream(in);
@@ -89,8 +65,13 @@ public class ReplicatedMap<K, V> extends ReplicatedStateMachine<K, V> implements
       case GET -> {
         log.info("GET: " + key);
         UUID uuid = Util.objectFromStream(in);
-        boolean quorum = in.readBoolean();
-        yield quorum ? new Response(uuid, quorumGet(key)) : new Response(uuid, get(key));
+        boolean before = allowDirtyReads();
+        try {
+          allowDirtyReads(!in.readBoolean());
+          yield new Response(uuid, get(key));
+        } finally {
+          allowDirtyReads(before);
+        }
       }
       case CAS -> {
         V from = Util.objectFromStream(in);
@@ -110,10 +91,6 @@ public class ReplicatedMap<K, V> extends ReplicatedStateMachine<K, V> implements
 
   private <O> O cast(Object o) {
     return (O) o;
-  }
-
-  public V quorumGet(K key) throws Exception {
-    return invoke(GET, key, null, false);
   }
 
   public boolean compareAndSet(K key, V from, V to) throws Exception {
