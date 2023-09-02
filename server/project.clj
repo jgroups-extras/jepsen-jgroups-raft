@@ -5,7 +5,7 @@
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [jepsen "0.3.3"]
-                 [org.jgroups/jgroups "5.2.17.Final"]
+                 [org.jgroups/jgroups "5.2.18.Final"]
                  [org.jgroups/jgroups-raft "1.0.12.Final-SNAPSHOT"]]
   :repl-options {:init-ns jgroups.raft.server}
   :aot [jgroups.raft.server]

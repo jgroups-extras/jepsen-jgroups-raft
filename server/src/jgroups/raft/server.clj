@@ -37,7 +37,8 @@
             (.withTimeout (long 30000)))]
     (case (:state-machine options)
       :register (.prepareReplicatedMapStateMachine s)
-      :counter  (.prepareCounterStateMachine s))
+      :counter  (.prepareCounterStateMachine s)
+      :election (.prepareElectionInspection s))
     (try+
       (.start s (InetAddress/getByName name) 9000)
       (catch Throwable t

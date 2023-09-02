@@ -23,7 +23,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public class SyncClient<T> implements Receiver, AutoCloseable {
   protected final Log log = LogFactory.getLog(getClass());
-  private final String name;
+  protected final String name;
   private final Map<UUID, CompletableFuture<T>> requests = new ConcurrentHashMap<>();
 
   private long timeout;
