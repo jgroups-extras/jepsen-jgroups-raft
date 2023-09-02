@@ -118,6 +118,13 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
     return this;
   }
 
+  public Server prepareElectionInspection() throws Exception {
+    if (channel != null) throw new IllegalStateException("Channel is already running");
+    channel = new JChannel(props).name(name);
+    stateMachine = new LeaderElection(channel);
+    return this;
+  }
+
   public Server start(InetAddress bind, int port) throws Exception {
     Objects.requireNonNull(channel, "Channel is null");
     Objects.requireNonNull(stateMachine, "State machine is null");

@@ -9,6 +9,6 @@
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [dom-top "1.0.8"]
                  [jepsen "0.3.3"]
-                 [org.jgroups/jgroups "5.2.17.Final"]
+                 [org.jgroups/jgroups "5.2.18.Final"]
                  [org.jgroups/jgroups-raft "1.0.12.Final-SNAPSHOT"]]
   :repl-options {:init-ns jepsen.jgroups.raft})

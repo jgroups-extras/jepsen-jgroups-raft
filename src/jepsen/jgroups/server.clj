@@ -104,6 +104,7 @@
   [opts]
   (case (:workload opts)
     :counter #"counter"
+    :election #"election"
     #"register"))
 
 (defn stop!
