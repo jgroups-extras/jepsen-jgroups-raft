@@ -7,7 +7,7 @@ We describe how to run the tests with the different setups we provide.
 To run using Linux Containers, we required [LXD](https://linuxcontainers.org/lxd/introduction/).
 And in addition to that, Jepsen's requirements:
 
-- A [JVM](https://openjdk.java.net/install/)---version 17 or higher.
+- A [JVM](https://openjdk.java.net/install/) version 21 or higher.
 - JNA, so the JVM can talk to your SSH.
 - [Leiningen](https://leiningen.org/): a Clojure build tool.
 - [Gnuplot](http://www.gnuplot.info/): how Jepsen renders performance plots.
@@ -16,10 +16,27 @@ And in addition to that, Jepsen's requirements:
 The host is the control node. The control node is responsible for running the tests.
 
 Now we are going to prepare the workers. Then, let's put some of the `lxc` to use.
-The first step, start a Debian 11 node:
+The first step, start a Debian 13 (Trixie) node.
+Unfortunately, LXC remote image repository was phased-down ([More here](https://discuss.linuxcontainers.org/t/important-notice-for-lxd-users-image-server/18479)).
+To install an image, we will retrieve the build from LXC Jenkins and add it locally.
+Some list of links:
+
+* LXC Jenkins: [https://jenkins.linuxcontainers.org/](https://jenkins.linuxcontainers.org/)
+* LXC Debian builds: [https://jenkins.linuxcontainers.org/job/image-debian/](https://jenkins.linuxcontainers.org/job/image-debian/)
+* JGroups Raft recommended image: [AMD64 Trixie default](https://jenkins.linuxcontainers.org/job/image-debian/architecture=amd64,release=trixie,variant=default/)
+
+Download the files `incus.tar.xz` and `rootfs.squashfs` to the same folder and execute:
 
 ```bash
-lxc launch images:debian/11 node-1
+lxc image import incus.tar.xz rootfs.squashfs --alias custom-debian-trixie
+```
+
+This should create an image hosted locally with the name `custom-debian-trixie`.
+We can proceed to the configuration now.
+Let's create the first node running our image:
+
+```bash
+lxc launch custom-debian-trixie node-1
 ```
 
 We have the first node running. The next step is configuring SSH on the running worker for

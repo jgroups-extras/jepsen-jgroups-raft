@@ -38,11 +38,12 @@
    "|"
    "sed" "-e" "'s/RAFT={leader=\\([a-z0-9A-Z\\.]\\+\\)}/\\1/g'"])
 
-(defn install-jdk17!
-  "Installs an openjdk jdk17."
+(defn install-jdk21!
+  "Installs an openjdk jdk21."
   []
   (c/su
-    (debian/install [:openjdk-17-jdk])))
+    (when-not (debian/installed? [:openjdk-21-jdk])
+      (debian/install [:openjdk-21-jdk]))))
 
 (defn build-server!
   "Build the server jar."
@@ -165,7 +166,7 @@
   (setup! [_ test node]
     (build-server! test node)
     (jepsen/synchronize test)
-    (install-jdk17!)
+    (install-jdk21!)
     (install-server!)
     (c/upload local-props-file remote-props-file)
     (jepsen/synchronize test)
