@@ -4,9 +4,9 @@
   :license {:name "EPL-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[org.clojure/clojure "1.11.1"]
-                 [jepsen "0.3.5"]
-                 [org.jgroups/jgroups "5.3.1.Final"]
-                 [org.jgroups/jgroups-raft "1.0.12.Final"]]
+                 [jepsen "0.3.8"]
+                 [org.jgroups/jgroups "5.4.5.Final"]
+                 [org.jgroups/jgroups-raft "1.1.0.Final-SNAPSHOT"]]
   :repl-options {:init-ns jgroups.raft.server}
   :aot [jgroups.raft.server]
   :main jgroups.raft.server

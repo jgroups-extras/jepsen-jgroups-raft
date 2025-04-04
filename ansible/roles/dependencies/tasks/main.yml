@@ -1,0 +1,10 @@
+- debug:
+    msg: "Operation is {{ operation | default('DEFAULT') }}"
+
+- name: "Initializing Jepsen requirements"
+  ansible.builtin.include_tasks: init.yml
+  when: operation is undefined or operation is search("init")
+
+- name: Stopping Java
+  ansible.builtin.include_tasks: stop.yml
+  when: operation is defined and operation is search("stop")

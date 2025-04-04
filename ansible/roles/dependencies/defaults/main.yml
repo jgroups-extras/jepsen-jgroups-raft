@@ -1,0 +1,4 @@
+sdkman_folder: /home/admin/.sdkman
+
+# JDKs utilized for testing
+jdk_version: 21.0.2-open

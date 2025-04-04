@@ -8,7 +8,7 @@
   :java-source-paths ["java"]
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [dom-top "1.0.8"]
-                 [jepsen "0.3.5"]
-                 [org.jgroups/jgroups "5.3.1.Final"]
-                 [org.jgroups/jgroups-raft "1.0.12.Final"]]
+                 [jepsen "0.3.8"]
+                 [org.jgroups/jgroups "5.4.5.Final"]
+                 [org.jgroups/jgroups-raft "1.1.0.Final-SNAPSHOT"]]
   :repl-options {:init-ns jepsen.jgroups.raft})

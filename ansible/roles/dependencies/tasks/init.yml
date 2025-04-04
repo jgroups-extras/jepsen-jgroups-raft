@@ -1,0 +1,52 @@
+- name: Update and upgrade apt packages
+  become: true
+  apt:
+    upgrade: yes
+    update_cache: yes
+
+- name: Install unzip
+  package:
+    name: "{{ item }}"
+    state: present
+  become: true
+  loop:
+    - zip
+    - unzip
+
+- name: Install and configure SDKMAN!
+  block:
+    - name: Check if SDKMAN! already downloaded
+      stat:
+        path: "{{ sdkman_folder }}"
+      register: stat_result
+
+    - name: Install SDKMAN!
+      ansible.builtin.shell: "curl -s 'https://get.sdkman.io' | bash"
+      args:
+        creates: "{{ sdkman_folder }}/etc/config"
+      when: not stat_result.stat.exists
+
+    - name: Configure SDKMAN!
+      ansible.builtin.shell: |
+        sed -i 's/sdkman_auto_answer=false/sdkman_auto_answer=true/g' "{{ sdkman_folder }}/etc/config"
+
+    - name: Install all JDKs
+      ansible.builtin.shell: |
+        source {{ sdkman_folder }}/bin/sdkman-init.sh
+        echo "Installing JDK {{ jdk_version }}"
+        sdk install java {{ jdk_version }}
+      args:
+        executable: /bin/bash
+
+    - name: Cleaning up
+      ansible.builtin.shell: |
+        source {{ sdkman_folder }}/bin/sdkman-init.sh
+        sdk flush
+      args:
+        executable: /bin/bash
+
+- name: Create nodes file
+  template:
+    src: nodes.j2
+    dest: ./nodes
+  delegate_to: localhost

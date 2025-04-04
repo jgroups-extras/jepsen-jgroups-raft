@@ -1,0 +1,13 @@
+cluster_identifier: "{{ lookup('env', 'USER') }}"
+cluster_name: "consistency_{{ cluster_identifier }}"
+
+cidr_ip: "{{ control_host_ip.stdout }}/32"
+
+test_cluster_size: 1
+test_instance_type: t2.micro
+test_ami_name: debian-12-amd64-20240717-1811
+test_user: admin
+test_volume_name: /dev/xvda
+test_volume_size: 8
+
+no_log_sensitive: true

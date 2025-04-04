@@ -72,14 +72,14 @@ public class SyncClient<T> implements Receiver, AutoCloseable {
   public void receive(Address sender, byte[] buf, int offset, int length) {
     ByteArrayDataInputStream in = new ByteArrayDataInputStream(buf, offset, length);
     try {
-      receive(sender, in);
+      receive(sender, in, length);
     } catch (Exception e) {
       e.printStackTrace();
     }
   }
 
   @Override
-  public void receive(Address address, DataInput in) throws Exception {
+  public void receive(Address address, DataInput in, int length) throws Exception {
     Object r = Util.objectFromStream(in);
     if (r instanceof Exception ex) {
       ex.printStackTrace();

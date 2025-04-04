@@ -50,14 +50,14 @@ public class Server implements Receiver, AutoCloseable, RAFT.RoleChange {
   @Override
   public void receive(Address sender, byte[] buf, int offset, int length) {
     try (ByteArrayDataInputStream in = new ByteArrayDataInputStream(buf, offset, length)) {
-      receive(sender, in);
+      receive(sender, in, length);
     } catch (Exception e) {
       log.error("Error receiving data from %s", sender, e);
     }
   }
 
   @Override
-  public void receive(Address address, DataInput in) throws Exception {
+  public void receive(Address address, DataInput in, int length) throws Exception {
     sendResponse(address, stateMachine.receive(in));
   }
 

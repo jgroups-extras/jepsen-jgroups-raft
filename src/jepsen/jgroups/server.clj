@@ -22,17 +22,19 @@
     [jepsen.os.debian :as debian]
     [slingshot.slingshot :refer [throw+ try+]]))
 
-(def dir "/opt/raft")
+(def binary "/home/admin/.sdkman/candidates/java/current/bin/java")
+(def dir "/home/admin/raft")
 (def remote-jar (str dir "/server.jar"))
 (def remote-props-file (str dir "/raft.xml"))
+(def remote-hosts-file (str dir "/hosts.txt"))
 (def log-file (str dir "/server.log"))
 (def pid-file (str dir "/server.pid"))
 (def local-server "server")
-(def local-props-file (str local-server "/resources/raft.xml"))
+(def local-props-file (str local-server "/resources/raft-aws.xml"))
 (def local-server-jar (str local-server "/target/server.jar"))
 
 (def get-leader-name
-  ["/usr/bin/java" "-cp" remote-jar "-Dcom.sun.management.jmxremote" "org.jgroups.tests.Probe" "jmx=RAFT.leader"
+  [binary "-cp" remote-jar "-Dcom.sun.management.jmxremote" "org.jgroups.tests.Probe" "jmx=RAFT.leader"
    "|"
    "grep" "'leader='"
    "|"
@@ -44,6 +46,18 @@
   (c/su
     (when-not (debian/installed? [:openjdk-21-jdk])
       (debian/install [:openjdk-21-jdk]))))
+
+(defn initial-cluster-file
+  "Creates the hosts.txt file for initial membership discovery in JGroups.
+
+  This file is utilized for cluster discovery during start up by the protocol. We write the contents of the
+  :nodes vector to the file, separated by newlines. The file is written to the user library folder and is loaded in
+  the classpath.
+  "
+  [test]
+  (let [hosts (str (str/join "\n" (:nodes test)) "\n")]
+    (info (str "Joining nodes to hosts file" (:nodes test)))
+    (cu/write-file! hosts remote-hosts-file)))
 
 (defn build-server!
   "Build the server jar."
@@ -114,7 +128,7 @@
   (info "Stopping node" node)
   (c/cd dir
         (c/su
-          (cu/stop-daemon! "/usr/bin/java" pid-file))))
+          (cu/stop-daemon! binary pid-file))))
 
 (defn definitely-stop!
   "Keep trying to stop the server until nothing is bound to the port."
@@ -129,46 +143,53 @@
 (defn start!
   "Start the server in listen mode."
   [test node]
-  (c/cd dir
-        ; We are initializing with the dynamic membership value.
-        ; We add the current node to the list of members, otherwise,
-        ; the node will not be able to start.
-        (let [members (->> (concat @(:members test) [node])
-                           ; If @(:member test) already contains the current node, we must remove
-                           ; the duplication.
-                           distinct
-                           (str/join ","))]
-          (info "Starting node" node "with members" members)
-          ; If for some reason the PID is still running and the port is bound, we can skip.
-          (if (or (is-pid-running?) (is-alive?* node 9000))
-            (do
-              (info "Process" node "is already running!")
-              :already-running)
-            (let [daemon (cu/start-daemon! {:chdir   dir
-                                            :logfile log-file
-                                            :pidfile pid-file}
-                                           "/usr/bin/java"
-                                           :-jar remote-jar
-                                           :--members members
-                                           :-n node
-                                           :-p remote-props-file
-                                           :-s (identify-state-machine test)
-                                           :>> log-file)]
-              (when (= daemon :started)
-                ; We wait for the server to be available before returning.
-                ; This can cause a timeout during startup.
-                (await-available node 9000)
-                (info "Started node" node))
-              daemon)))))
+  ; We are initializing with the dynamic membership value.
+  ; We add the current node to the list of members, otherwise,
+  ; the node will not be able to start.
+  (let [members (->> (concat @(:members test) [node])
+                     ; If @(:member test) already contains the current node, we must remove
+                     ; the duplication.
+                     distinct
+                     (str/join ","))]
+    (info "Starting node" node "with members" members)
+    ; If for some reason the PID is still running and the port is bound, we can skip.
+    (if (or (is-pid-running?) (is-alive?* node 9000))
+      (do
+        (info "Process" node "is already running!")
+        :already-running)
+      (do
+        ; We utilize sudo to copy the start-stop-daemon executable into another folder.
+        ; This is needed to run the server without sudo.
+        (c/su
+          (c/exec :ln :-sf (c/lit "/usr/sbin/start-stop-daemon") (c/lit "/usr/bin/start-stop-daemon")))
+
+        (let [daemon (cu/start-daemon! {:chdir   dir
+                                        :logfile log-file
+                                        :pidfile pid-file}
+                                       binary
+                                       :-cp remote-hosts-file
+                                       :-jar remote-jar
+                                       :--members members
+                                       :-n node
+                                       :-p remote-props-file
+                                       :-s (identify-state-machine test)
+                                       :>> log-file)]
+          (when (= daemon :started)
+            ; We wait for the server to be available before returning.
+            ; This can cause a timeout during startup.
+            (await-available node 9000)
+            (info "Started node" node))
+          daemon)))))
 
 (defrecord Server []
   db/DB
   (setup! [_ test node]
     (build-server! test node)
     (jepsen/synchronize test)
-    (install-jdk21!)
+    ;;(install-jdk21!)
     (install-server!)
     (c/upload local-props-file remote-props-file)
+    (initial-cluster-file test)
     (jepsen/synchronize test)
     (start! test node))
 
